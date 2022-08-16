@@ -1,36 +1,31 @@
 import {
-  Source,
-  makeSubject,
-  share,
-  pipe,
-  merge,
+  debounce,
   filter,
   fromValue,
-  debounce,
+  makeSubject,
+  merge,
   mergeMap,
+  pipe,
+  share,
+  Source,
   takeUntil,
 } from 'wonka';
 
 import {
-  makeOperation,
   Exchange,
+  makeOperation,
   Operation,
-  CombinedError,
   OperationResult,
 } from '@urql/core';
+import { Kind } from 'graphql/language';
+import { createFromPath } from './getter';
 
 export interface RedialExchangeOptions {
   initialDelayMs?: number;
   maxDelayMs?: number;
   randomDelay?: boolean;
   maxNumberAttempts?: number;
-  /** Conditionally determine whether an error should be retried */
-  retryIf?: (error: CombinedError, operation: Operation) => boolean;
-  /** Conditionally update operations as they're retried (retryIf can be replaced with this) */
-  retryWith?: (
-    error: CombinedError,
-    operation: Operation
-  ) => Operation | null | undefined;
+  retryUntilPatternSucceeds: Record<string, string | string[]>;
 }
 
 export const redialExchange = ({
@@ -38,13 +33,43 @@ export const redialExchange = ({
   maxDelayMs,
   randomDelay,
   maxNumberAttempts,
-  retryIf,
-  retryWith,
+  retryUntilPatternSucceeds,
 }: RedialExchangeOptions): Exchange => {
   const MIN_DELAY = initialDelayMs || 1000;
   const MAX_DELAY = maxDelayMs || 15000;
-  const MAX_ATTEMPTS = maxNumberAttempts || 2;
+  const MAX_ATTEMPTS = maxNumberAttempts || 100;
   const RANDOM_DELAY = randomDelay || true;
+
+  const queryEntries = Object.entries(retryUntilPatternSucceeds).map(
+    ([queryName, ruleOrRules]) => {
+      const rules =
+        typeof ruleOrRules === 'string' ? [ruleOrRules] : ruleOrRules;
+
+      rules.forEach((rule, i) => {
+        if (!rule.startsWith('$.'))
+          throw new Error(
+            `Redial matcher of query "${queryName}"[${i}] should have leading root selector "$." but non were given: ${rule}`
+          );
+      });
+
+      const matchers = rules.map(path => {
+        const getter = createFromPath(path);
+        return (obj: object) => {
+          const val = getter(obj);
+          return !!val;
+        };
+      });
+
+      return [
+        queryName as string,
+        (obj: object) => matchers.every(match => match(obj)),
+      ] as const;
+    }
+  );
+
+  const QUERY_SUCCEEDED = new Map<string, (obj: object) => boolean>(
+    queryEntries
+  );
 
   return ({ forward, dispatchDebug }) => ops$ => {
     const sharedOps$ = pipe(ops$, share);
@@ -111,36 +136,35 @@ export const redialExchange = ({
       filter(res => {
         // Only retry if the error passes the conditional retryIf function (if passed)
         // or if the error contains a networkError
+        const query = res.operation.query.definitions[0];
+
         if (
-          !res.error ||
-          (retryIf
-            ? !retryIf(res.error, res.operation)
-            : !retryWith && !res.error.networkError)
+          res.error ||
+          query.kind !== Kind.OPERATION_DEFINITION ||
+          !query.name ||
+          !QUERY_SUCCEEDED.has(query.name.value)
         ) {
           return true;
         }
 
+        const isAllMatched = QUERY_SUCCEEDED.get(query.name.value)!(res.data);
         const maxNumberAttemptsExceeded =
           (res.operation.context.retryCount || 0) >= MAX_ATTEMPTS - 1;
 
-        if (!maxNumberAttemptsExceeded) {
-          const operation = retryWith
-            ? retryWith(res.error, res.operation)
-            : res.operation;
-          if (!operation) return true;
-
+        if (!maxNumberAttemptsExceeded && !isAllMatched) {
           // Send failed responses to be retried by calling next on the retry$ subject
           // Exclude operations that have been retried more than the specified max
-          nextRetryOperation(operation);
+          nextRetryOperation(res.operation);
           return false;
         }
 
-        dispatchDebug({
-          type: 'retryExhausted',
-          message:
-            'Maximum number of retries has been reached. No further retries will be performed.',
-          operation: res.operation,
-        });
+        if (maxNumberAttemptsExceeded)
+          dispatchDebug({
+            type: 'retryExhausted',
+            message:
+              'Maximum number of retries has been reached. No further retries will be performed.',
+            operation: res.operation,
+          });
 
         return true;
       })
