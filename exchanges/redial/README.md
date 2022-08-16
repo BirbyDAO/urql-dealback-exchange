@@ -1,15 +1,24 @@
-# @urql/exchange-retry (Exchange factory)
+# urql-exchange-redial (Exchange factory)
 
-`@urql/exchange-retry` is an exchange for the [`urql`](../../README.md) GraphQL client that allows operations (queries, mutations, subscriptions) to be retried based on an `options` parameter.
+`urql-exchange-redial` is an exchange for the [`urql`](https://formidable.com/open-source/urql)
+GraphQL client that allows operations (queries, mutations, subscriptions) to be retried based on
+an `options` parameter.
 
 ## Quick Start Guide
 
-First install `@urql/exchange-retry` alongside `urql`:
+First install `urql-exchange-redial` alongside `urql`.
 
-```sh
-yarn add @urql/exchange-retry
-# or
-npm install --save @urql/exchange-retry
+Then use it like this:
+
+```javascript
+const exchange = redialExchange({
+  initialDelayMs: 1000,
+  maxDelayMs: 15000,
+  randomDelay: true,
+  maxNumberAttempts: 100,
+  retryUntilPatternSucceeds: {
+    queryName: '$.queryResult.id',
+    anotherQueryName: ['$.result.id', '$.result.nestedResult'],
+  },
+});
 ```
-
-Read more about the [retry exchange](https://formidable.com/open-source/urql/docs/advanced/retry-operations).
