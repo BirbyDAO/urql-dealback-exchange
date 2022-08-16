@@ -77,13 +77,6 @@ invariant(
   'package.json:types path must be valid'
 );
 
-invariant(
-  is(
-    pkg.repository.directory,
-    path.relative(workspaceRoot, cwd)
-  ),
-  'package.json:repository.directory path is invalid'
-);
 
 invariant(
   pkg.sideEffects === false,
