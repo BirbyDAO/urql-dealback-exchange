@@ -1,31 +1,24 @@
 {
-  "name": "@urql/exchange-retry",
-  "version": "0.3.3",
+  "name": "urql-exchange-redial",
+  "version": "0.1.0",
   "description": "An exchange for operation retry support in urql",
   "sideEffects": false,
-  "homepage": "https://formidable.com/open-source/urql/docs/",
-  "bugs": "https://github.com/FormidableLabs/urql/issues",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/FormidableLabs/urql.git",
-    "directory": "exchanges/retry"
-  },
   "keywords": [
     "urql",
     "graphql client",
     "formidablelabs",
     "exchanges",
-    "retry"
+    "redial"
   ],
-  "main": "dist/urql-exchange-retry",
-  "module": "dist/urql-exchange-retry.mjs",
+  "main": "dist/urql-exchange-redial",
+  "module": "dist/urql-exchange-redial.mjs",
   "types": "dist/types/index.d.ts",
   "source": "src/index.ts",
   "exports": {
     ".": {
-      "import": "./dist/urql-exchange-retry.mjs",
-      "require": "./dist/urql-exchange-retry.js",
+      "import": "./dist/urql-exchange-redial.mjs",
+      "require": "./dist/urql-exchange-redial.js",
       "types": "./dist/types/index.d.ts",
       "source": "./src/index.ts"
     },

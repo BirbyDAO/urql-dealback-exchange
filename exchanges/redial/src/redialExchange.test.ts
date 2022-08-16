@@ -9,7 +9,7 @@ import {
   ExchangeIO,
 } from '@urql/core';
 
-import { retryExchange, RetryExchangeOptions } from './retryExchange';
+import { redialExchange, RedialExchangeOptions } from './redialExchange';
 
 const dispatchDebug = jest.fn();
 
@@ -100,10 +100,10 @@ it(`retries if it hits an error and works for multiple concurrent operations`, (
     return pipe(ops$, map(response));
   };
 
-  const mockRetryIf = jest.fn((() => true) as RetryExchangeOptions['retryIf']);
+  const mockRetryIf = jest.fn((() => true) as RedialExchangeOptions['retryIf']);
 
   pipe(
-    retryExchange({
+    redialExchange({
       ...mockOptions,
       retryIf: mockRetryIf,
     })({
@@ -160,10 +160,10 @@ it('should retry x number of times and then return the successful result', () =>
     return pipe(ops$, map(response));
   };
 
-  const mockRetryIf = jest.fn((() => true) as RetryExchangeOptions['retryIf']);
+  const mockRetryIf = jest.fn((() => true) as RedialExchangeOptions['retryIf']);
 
   pipe(
-    retryExchange({
+    redialExchange({
       ...mockOptions,
       retryIf: mockRetryIf,
     })({
@@ -208,7 +208,7 @@ it(`should still retry if retryIf undefined but there is a networkError`, () => 
   };
 
   pipe(
-    retryExchange({
+    redialExchange({
       ...mockOptions,
       retryIf: undefined,
     })({
@@ -253,7 +253,7 @@ it('should allow retryWhen to return falsy value and act as replacement of retry
   const retryWith = jest.fn(() => null);
 
   pipe(
-    retryExchange({
+    redialExchange({
       ...mockOptions,
       retryIf: undefined,
       retryWith,
@@ -305,7 +305,7 @@ it('should allow retryWhen to return new operations when retrying', () => {
   });
 
   pipe(
-    retryExchange({
+    redialExchange({
       ...mockOptions,
       retryIf: undefined,
       retryWith,

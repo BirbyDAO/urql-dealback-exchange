@@ -19,7 +19,7 @@ import {
   OperationResult,
 } from '@urql/core';
 
-export interface RetryExchangeOptions {
+export interface RedialExchangeOptions {
   initialDelayMs?: number;
   maxDelayMs?: number;
   randomDelay?: boolean;
@@ -33,14 +33,14 @@ export interface RetryExchangeOptions {
   ) => Operation | null | undefined;
 }
 
-export const retryExchange = ({
+export const redialExchange = ({
   initialDelayMs,
   maxDelayMs,
   randomDelay,
   maxNumberAttempts,
   retryIf,
   retryWith,
-}: RetryExchangeOptions): Exchange => {
+}: RedialExchangeOptions): Exchange => {
   const MIN_DELAY = initialDelayMs || 1000;
   const MAX_DELAY = maxDelayMs || 15000;
   const MAX_ATTEMPTS = maxNumberAttempts || 2;
