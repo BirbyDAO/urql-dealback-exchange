@@ -1,15 +1,15 @@
-import { pipe, map, makeSubject, publish, tap } from 'wonka';
+import { makeSubject, map, pipe, publish, tap } from 'wonka';
 
 import {
-  gql,
+  CombinedError,
   createClient,
-  makeOperation,
+  ExchangeIO,
+  gql,
   Operation,
   OperationResult,
-  ExchangeIO,
 } from '@urql/core';
 
-import { redialExchange, RedialExchangeOptions } from './redialExchange';
+import { redialExchange } from './redialExchange';
 
 const dispatchDebug = jest.fn();
 
@@ -26,11 +26,15 @@ const mockOptions = {
   maxDelayMs: 500,
   randomDelay: true,
   maxNumberAttempts: 10,
-  retryIf: () => true,
+  retryUntilPatternSucceeds: {
+    author: '$.author.id',
+    complex: ['$.complex.path.to.match', '$.with.multiple.results'],
+  },
 };
 
+// noinspection GraphQLUnresolvedReference
 const queryOne = gql`
-  {
+  query author {
     author {
       id
       name
@@ -45,6 +49,11 @@ const queryOneData = {
     id: '123',
     name: 'Author',
   },
+};
+
+const queryOneEmpty = {
+  __typename: 'Query',
+  author: null,
 };
 
 const queryOneError = {
@@ -63,34 +72,14 @@ beforeEach(() => {
   ({ source: ops$, next } = makeSubject<Operation>());
 });
 
-it(`retries if it hits an error and works for multiple concurrent operations`, () => {
-  const queryTwo = gql`
-    {
-      films {
-        id
-        name
-      }
-    }
-  `;
-  const queryTwoError = {
-    name: 'error2',
-    message: 'scary error2',
-  };
-  const opTwo = client.createRequestOperation('query', {
-    key: 2,
-    query: queryTwo,
-  });
-
+it(`retries response doesn't have result`, () => {
   const response = jest.fn(
     (forwardOp: Operation): OperationResult => {
-      expect(
-        forwardOp.key === op.key || forwardOp.key === opTwo.key
-      ).toBeTruthy();
+      expect(forwardOp.key === op.key).toBeTruthy();
 
       return {
         operation: forwardOp,
-        // @ts-ignore
-        error: forwardOp.key === 2 ? queryTwoError : queryOneError,
+        data: queryOneEmpty,
       };
     }
   );
@@ -100,13 +89,8 @@ it(`retries if it hits an error and works for multiple concurrent operations`, (
     return pipe(ops$, map(response));
   };
 
-  const mockRetryIf = jest.fn((() => true) as RedialExchangeOptions['retryIf']);
-
   pipe(
-    redialExchange({
-      ...mockOptions,
-      retryIf: mockRetryIf,
-    })({
+    redialExchange(mockOptions)({
       forward,
       client,
       dispatchDebug,
@@ -117,27 +101,97 @@ it(`retries if it hits an error and works for multiple concurrent operations`, (
 
   next(op);
 
-  expect(mockRetryIf).toHaveBeenCalledTimes(1);
-  expect(mockRetryIf).toHaveBeenCalledWith(queryOneError as any, op);
-
   jest.runAllTimers();
-
-  expect(mockRetryIf).toHaveBeenCalledTimes(mockOptions.maxNumberAttempts);
 
   expect(response).toHaveBeenCalledTimes(mockOptions.maxNumberAttempts);
 
   // result should only ever be called once per operation
   expect(result).toHaveBeenCalledTimes(1);
+});
+
+it(`should not retry on errors`, () => {
+  const response = jest.fn(
+    (forwardOp: Operation): OperationResult => {
+      expect(forwardOp.key === op.key).toBeTruthy();
+
+      return {
+        operation: forwardOp,
+        error: queryOneError as CombinedError,
+      };
+    }
+  );
+
+  const result = jest.fn();
+  const forward: ExchangeIO = ops$ => {
+    return pipe(ops$, map(response));
+  };
+
+  pipe(
+    redialExchange(mockOptions)({
+      forward,
+      client,
+      dispatchDebug,
+    })(ops$),
+    tap(result),
+    publish
+  );
+
+  next(op);
+
+  jest.runAllTimers();
+
+  expect(response).toHaveBeenCalledTimes(1);
+
+  // result should only ever be called once per operation
+  expect(result).toHaveBeenCalledTimes(1);
+});
+
+it(`should not retry on unknown queries`, () => {
+  // noinspection GraphQLUnresolvedReference
+  const queryTwo = gql`
+    query NOT_EXISTENT_NAME {
+      films {
+        id
+        name
+      }
+    }
+  `;
+  const opTwo = client.createRequestOperation('query', {
+    key: 2,
+    query: queryTwo,
+  });
+
+  const response = jest.fn(
+    (forwardOp: Operation): OperationResult => ({
+      operation: forwardOp,
+      data: { films: null },
+    })
+  );
+
+  const result = jest.fn();
+  const forward: ExchangeIO = ops$ => {
+    return pipe(ops$, map(response));
+  };
+
+  pipe(
+    redialExchange(mockOptions)({
+      forward,
+      client,
+      dispatchDebug,
+    })(ops$),
+    tap(result),
+    publish
+  );
 
   next(opTwo);
 
   jest.runAllTimers();
 
-  expect(mockRetryIf).toHaveBeenCalledWith(queryTwoError as any, opTwo);
-
-  // max number of retries for each op
-  expect(response).toHaveBeenCalledTimes(mockOptions.maxNumberAttempts * 2);
-  expect(result).toHaveBeenCalledTimes(2);
+  expect(response).toHaveBeenCalledTimes(1);
+  expect(result).toHaveBeenCalledTimes(1);
+  expect(result.mock.calls[0][0]).toMatchObject({
+    data: { films: null },
+  });
 });
 
 it('should retry x number of times and then return the successful result', () => {
@@ -150,7 +204,7 @@ it('should retry x number of times and then return the successful result', () =>
         operation: forwardOp,
         ...(forwardOp.context.retryCount! >= numberRetriesBeforeSuccess
           ? { data: queryOneData }
-          : { error: queryOneError }),
+          : { data: queryOneEmpty }),
       };
     }
   );
@@ -160,13 +214,8 @@ it('should retry x number of times and then return the successful result', () =>
     return pipe(ops$, map(response));
   };
 
-  const mockRetryIf = jest.fn((() => true) as RedialExchangeOptions['retryIf']);
-
   pipe(
-    redialExchange({
-      ...mockOptions,
-      retryIf: mockRetryIf,
-    })({
+    redialExchange(mockOptions)({
       forward,
       client,
       dispatchDebug,
@@ -177,139 +226,66 @@ it('should retry x number of times and then return the successful result', () =>
 
   next(op);
   jest.runAllTimers();
-
-  expect(mockRetryIf).toHaveBeenCalledTimes(numberRetriesBeforeSuccess);
-  expect(mockRetryIf).toHaveBeenCalledWith(queryOneError as any, op);
 
   // one for original source, one for retry
   expect(response).toHaveBeenCalledTimes(1 + numberRetriesBeforeSuccess);
   expect(result).toHaveBeenCalledTimes(1);
 });
 
-it(`should still retry if retryIf undefined but there is a networkError`, () => {
-  const errorWithNetworkError = {
-    ...queryOneError,
-    networkError: 'scary network error',
-  };
-  const response = jest.fn(
-    (forwardOp: Operation): OperationResult => {
-      expect(forwardOp.key).toBe(op.key);
-      return {
-        operation: forwardOp,
-        // @ts-ignore
-        error: errorWithNetworkError,
-      };
+it('should retry until all matches succeed', () => {
+  const numberRetriesBeforeSuccess = 1;
+
+  const queryTwo = gql`
+    # noinspection GraphQLUnresolvedReference
+
+    query complex {
+      complex {
+        path {
+          to {
+            match
+          }
+        }
+      }
+      with {
+        multiple {
+          results
+        }
+      }
     }
-  );
-
-  const result = jest.fn();
-  const forward: ExchangeIO = ops$ => {
-    return pipe(ops$, map(response));
-  };
-
-  pipe(
-    redialExchange({
-      ...mockOptions,
-      retryIf: undefined,
-    })({
-      forward,
-      client,
-      dispatchDebug,
-    })(ops$),
-    tap(result),
-    publish
-  );
-
-  next(op);
-
-  jest.runAllTimers();
-
-  // max number of retries, plus original call
-  expect(response).toHaveBeenCalledTimes(mockOptions.maxNumberAttempts);
-  expect(result).toHaveBeenCalledTimes(1);
-});
-
-it('should allow retryWhen to return falsy value and act as replacement of retryIf', () => {
-  const errorWithNetworkError = {
-    ...queryOneError,
-    networkError: 'scary network error',
-  };
-  const response = jest.fn(
-    (forwardOp: Operation): OperationResult => {
-      expect(forwardOp.key).toBe(op.key);
-      return {
-        operation: forwardOp,
-        // @ts-ignore
-        error: errorWithNetworkError,
-      };
-    }
-  );
-
-  const result = jest.fn();
-  const forward: ExchangeIO = ops$ => {
-    return pipe(ops$, map(response));
-  };
-
-  const retryWith = jest.fn(() => null);
-
-  pipe(
-    redialExchange({
-      ...mockOptions,
-      retryIf: undefined,
-      retryWith,
-    })({
-      forward,
-      client,
-      dispatchDebug,
-    })(ops$),
-    tap(result),
-    publish
-  );
-
-  next(op);
-
-  jest.runAllTimers();
-
-  // max number of retries, plus original call
-  expect(retryWith).toHaveBeenCalledTimes(1);
-  expect(response).toHaveBeenCalledTimes(1);
-  expect(result).toHaveBeenCalledTimes(1);
-});
-
-it('should allow retryWhen to return new operations when retrying', () => {
-  const errorWithNetworkError = {
-    ...queryOneError,
-    networkError: 'scary network error',
-  };
-  const response = jest.fn(
-    (forwardOp: Operation): OperationResult => {
-      expect(forwardOp.key).toBe(op.key);
-      return {
-        operation: forwardOp,
-        // @ts-ignore
-        error: errorWithNetworkError,
-      };
-    }
-  );
-
-  const result = jest.fn();
-  const forward: ExchangeIO = ops$ => {
-    return pipe(ops$, map(response));
-  };
-
-  const retryWith = jest.fn((_error, operation) => {
-    return makeOperation(operation.kind, operation, {
-      ...operation.context,
-      counter: (operation.context?.counter || 0) + 1,
-    });
+  `;
+  const opTwo = client.createRequestOperation('query', {
+    key: 2,
+    query: queryTwo,
   });
 
+  const queryTwoHalfEmpty = {
+    complex: { path: { to: { match: 'true' } } },
+  };
+  const queryTwoData = {
+    ...queryTwoHalfEmpty,
+    with: { multiple: { results: [] } },
+  };
+
+  const response = jest.fn(
+    (forwardOp: Operation): OperationResult => {
+      expect(forwardOp.key).toBe(opTwo.key);
+      // @ts-ignore
+      return {
+        operation: forwardOp,
+        ...(forwardOp.context.retryCount! >= numberRetriesBeforeSuccess
+          ? { data: queryTwoData }
+          : { data: queryTwoHalfEmpty }),
+      };
+    }
+  );
+
+  const result = jest.fn();
+  const forward: ExchangeIO = ops$ => {
+    return pipe(ops$, map(response));
+  };
+
   pipe(
-    redialExchange({
-      ...mockOptions,
-      retryIf: undefined,
-      retryWith,
-    })({
+    redialExchange(mockOptions)({
       forward,
       client,
       dispatchDebug,
@@ -318,15 +294,11 @@ it('should allow retryWhen to return new operations when retrying', () => {
     publish
   );
 
-  next(op);
-
+  next(opTwo);
   jest.runAllTimers();
 
-  // max number of retries, plus original call
-  expect(retryWith).toHaveBeenCalledTimes(mockOptions.maxNumberAttempts - 1);
-  expect(response).toHaveBeenCalledTimes(mockOptions.maxNumberAttempts);
+  // one for original source, one for retry
+  expect(response).toHaveBeenCalledTimes(1 + numberRetriesBeforeSuccess);
   expect(result).toHaveBeenCalledTimes(1);
-
-  expect(response.mock.calls[1][0]).toHaveProperty('context.counter', 1);
-  expect(response.mock.calls[2][0]).toHaveProperty('context.counter', 2);
+  expect(result.mock.calls[0][0]).toMatchObject({ data: queryTwoData });
 });
