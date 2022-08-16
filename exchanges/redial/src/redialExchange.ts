@@ -35,10 +35,10 @@ export const redialExchange = ({
   maxNumberAttempts,
   retryUntilPatternSucceeds,
 }: RedialExchangeOptions): Exchange => {
-  const MIN_DELAY = initialDelayMs || 1000;
-  const MAX_DELAY = maxDelayMs || 15000;
-  const MAX_ATTEMPTS = maxNumberAttempts || 100;
-  const RANDOM_DELAY = randomDelay || true;
+  const MIN_DELAY = initialDelayMs ?? 1000;
+  const MAX_DELAY = maxDelayMs ?? 15000;
+  const MAX_ATTEMPTS = maxNumberAttempts ?? 100;
+  const RANDOM_DELAY = randomDelay ?? true;
 
   const queryEntries = Object.entries(retryUntilPatternSucceeds).map(
     ([queryName, ruleOrRules]) => {
