@@ -8,7 +8,6 @@ module.exports = {
     },
   },
   extends: [
-    'plugin:react/recommended',
     'prettier',
   ],
   ignorePatterns: [
@@ -20,17 +19,11 @@ module.exports = {
     'scripts/'
   ],
   plugins: [
-    'react-hooks',
     'prettier',
     'jest',
     'es5',
   ],
   rules: {
-    'react-hooks/rules-of-hooks': 'error',
-    'react-hooks/exhaustive-deps': 'warn',
-    'react/react-in-jsx-scope': 'off',
-    'react/prop-types': 'off',
-    'react/no-children-prop': 'off',
     'sort-keys': 'off',
     'no-console': ['error', { allow: ['warn', 'error'] }],
     'prefer-arrow/prefer-arrow-functions': 'off',
@@ -68,9 +61,6 @@ module.exports = {
   ],
 
   settings: {
-    react: {
-      version: 'detect',
-    },
     'import/extensions': [
       '.js',
       '.jsx',
