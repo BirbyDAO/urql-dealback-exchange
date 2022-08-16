@@ -1,1 +1,0 @@
-export { makeAsyncStorage } from './makeAsyncStorage';
